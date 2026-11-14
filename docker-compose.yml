@@ -1,0 +1,41 @@
+# ShopMesh – local dev stack (Docker Compose v2)
+# Run from repo root:  docker compose up -d --build
+# Later (W2) every block here maps to Kubernetes objects.
+
+services:
+  # ---------- PostgreSQL: data for product (and order later) ----------
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      # Read by the postgres image on FIRST start to create user/password/db
+      POSTGRES_USER: shopmesh
+      POSTGRES_PASSWORD: shopmesh_dev_pw # dev only; W2 moves this to a Kubernetes Secret
+      POSTGRES_DB: shopmesh
+    ports:
+      - "5432:5432" # host:container → lets tools on the host (psql, local uvicorn) connect
+    volumes:
+      - pg_data:/var/lib/postgresql/data # named volume → data survives `docker compose down`
+      - ./db/init:/docker-entrypoint-initdb.d:ro # seed SQL, runs only when the volume is empty
+    healthcheck:
+      # "Is Postgres ready to accept connections?" → status shows (healthy)
+      test: [ "CMD-SHELL", "pg_isready -U shopmesh -d shopmesh" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---------- product service (FastAPI) ----------
+  product:
+    build: ./services/product # build the image from services/product/Dockerfile
+    image: shopmesh/product:0.3.0 # tag given to the built image (semver: 0.2.0 = reads from DB)
+    environment:
+      # host = "postgres" = the service name above (Compose DNS), NOT localhost:
+      # inside a container, localhost means the container itself
+      DATABASE_URL: postgresql://shopmesh:shopmesh_dev_pw@postgres:5432/shopmesh
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy # start product only after Postgres is (healthy)
+
+volumes:
+  pg_data: {} # declare the named volume used above
